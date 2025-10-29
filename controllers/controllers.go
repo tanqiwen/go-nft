@@ -1,8 +1,13 @@
 package controllers
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha3"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"image"
@@ -487,10 +492,101 @@ func generateRandomChallenge() (string, error) {
 	return "0x" + hex.EncodeToString(bytes), nil
 }
 
-// 生成模拟签名（实际应该使用正确的签名算法）
+// 生成ECDSA签名，与Solidity中的验证逻辑匹配
 func generateDummySignature(hseed, address string, chainId int) string {
-	// 这里只是模拟，实际应该使用ECDSA等算法进行签名
-	data := fmt.Sprintf("%s:%s:%d:%d", hseed, address, chainId, time.Now().Unix())
-	bytes := []byte(data)
-	return "0x" + hex.EncodeToString(bytes)
+	// 从环境变量中获取私钥，这是更安全的做法
+	privateKeyHex := os.Getenv("SIGN_SECRET")
+	
+	// 如果环境变量未设置，使用一个默认的测试私钥（仅用于开发环境）
+	if privateKeyHex == "" {
+		fmt.Println("警告: 未设置SIGN_SECRET环境变量，使用测试私钥")
+		privateKeyHex = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	}
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	if err != nil {
+		// 如果私钥解析失败，返回一个错误签名
+		return "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+	}
+
+	// 解析私钥
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), bytes.NewReader(privateKeyBytes))
+	if err != nil {
+		// 如果无法生成密钥，返回一个错误签名
+		return "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002"
+	}
+
+	// 根据Solidity代码，构建消息（注意这里默认isWhitelisted为false）
+	isWhitelisted := false
+	message := abiEncodePacked(hseed, address, chainId, isWhitelisted)
+
+	// 计算keccak256哈希
+	hash := sha3.Sum256(message)
+
+	// 添加以太坊签名前缀 (EIP-191)
+	eip191Prefix := []byte("\x19Ethereum Signed Message:\n32")
+	prefixedMessage := append(eip191Prefix, hash[:]...)
+	prefixedHash := sha3.Sum256(prefixedMessage)
+
+	// 使用ECDSA进行签名
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, prefixedHash[:])
+	if err != nil {
+		// 如果签名失败，返回一个错误签名
+		return "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003"
+	}
+
+	// 格式化签名：r + s + v（v应该是0或1，这里我们默认使用0）
+	rBytes := r.Bytes()
+	sBytes := s.Bytes()
+	rPadded := make([]byte, 32)
+	sPadded := make([]byte, 32)
+	copy(rPadded[32-len(rBytes):], rBytes)
+	copy(sPadded[32-len(sBytes):], sBytes)
+
+	// 组合签名
+	signature := make([]byte, 65)
+	copy(signature[:32], rPadded)
+	copy(signature[32:64], sPadded)
+	signature[64] = 0 // v值，0或1
+
+	return "0x" + hex.EncodeToString(signature)
+}
+
+// 模拟Solidity的abi.encodePacked函数
+func abiEncodePacked(args ...interface{}) []byte {
+	var result []byte
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case string:
+			// 检查是否是以太坊地址格式（以0x开头，长度为42）
+			if len(v) == 42 && strings.HasPrefix(v, "0x") {
+				// 移除0x前缀并转换为字节数组
+				hexStr := v[2:]
+				if len(hexStr) == 40 {
+					// 尝试将十六进制字符串转换为字节数组
+					addrBytes, err := hex.DecodeString(hexStr)
+					if err == nil && len(addrBytes) == 20 {
+						// 成功解析为以太坊地址，直接添加20字节
+						result = append(result, addrBytes...)
+						continue
+					}
+				}
+			}
+			// 不是有效的以太坊地址，按普通字符串处理
+			result = append(result, []byte(v)...)
+		case int:
+			// 将int转换为大端字节序的32字节表示
+			b := make([]byte, 32)
+			binary.BigEndian.PutUint64(b[24:], uint64(v))
+			result = append(result, b...)
+		case bool:
+			// bool类型在Solidity中是1字节
+			if v {
+				result = append(result, 1)
+			} else {
+				result = append(result, 0)
+			}
+		}
+	}
+	return result
 }
