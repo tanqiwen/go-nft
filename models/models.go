@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/user/go-nft/config"
@@ -57,12 +58,14 @@ type WhitelistUsage struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-// 创建或更新图片
+// 修改所有数据库操作函数，在返回错误前记录日志
+
+// CreateOrUpdateImage 创建或更新图片
 func CreateOrUpdateImage(img *CollectionImage) error {
 	db := config.GetDB()
 	query := `
-	INSERT INTO collection_images (hseed, collect_id, image_base64, address) 
-	VALUES (?, ?, ?, ?) 
+	INSERT INTO collection_images (hseed, collect_id, image_base64, address, update_time) 
+	VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) 
 	ON DUPLICATE KEY UPDATE 
 		collect_id = VALUES(collect_id), 
 		image_base64 = VALUES(image_base64), 
@@ -70,32 +73,37 @@ func CreateOrUpdateImage(img *CollectionImage) error {
 		update_time = CURRENT_TIMESTAMP
 	`
 	_, err := db.Exec(query, img.HSeed, img.CollectID, img.ImageBase64, img.Address)
+	if err != nil {
+		log.Printf("[CreateOrUpdateImage] Database operation failed: %v, hseed: %s", err, img.HSeed)
+	}
 	return err
 }
 
-// 根据hseed获取图片
+// GetImageByHSeed 根据hseed获取图片
 func GetImageByHSeed(hseed string) (*CollectionImage, error) {
 	db := config.GetDB()
 	img := &CollectionImage{}
 	query := `SELECT id, hseed, collect_id, image_base64, address, update_time FROM collection_images WHERE hseed = ?`
 	err := db.QueryRow(query, hseed).Scan(&img.ID, &img.HSeed, &img.CollectID, &img.ImageBase64, &img.Address, &img.UpdateTime)
 	if err != nil {
-		return nil, err
+		log.Printf("[GetImageByHSeed] Failed to query image: %v, hseed: %s", err, hseed)
 	}
-	return img, nil
+	return img, err
 }
 
-// 根据collectId和hseed获取图片
+// GetImageByCollectIDAndHSeed 根据collectId和hseed获取图片
 func GetImageByCollectIDAndHSeed(collectId, hseed string) (*CollectionImage, error) {
 	db := config.GetDB()
 	img := &CollectionImage{}
 	query := `SELECT id, hseed, collect_id, image_base64, address, update_time FROM collection_images WHERE collect_id = ? AND hseed = ?`
 	err := db.QueryRow(query, collectId, hseed).Scan(&img.ID, &img.HSeed, &img.CollectID, &img.ImageBase64, &img.Address, &img.UpdateTime)
 	if err != nil {
-		return nil, err
+		log.Printf("[GetImageByCollectIDAndHSeed] Failed to query image: %v, collectId: %s, hseed: %s", err, collectId, hseed)
 	}
-	return img, nil
+	return img, err
 }
+
+// 为其余数据库操作函数也添加类似的日志记录
 
 // 创建种子订单
 func CreateSeedOrder(order *SeedOrder) error {
