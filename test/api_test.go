@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 )
 
 // 测试前的初始化
+// 首先，在setupTest函数中添加GetStaticImage接口的模拟实现
 func setupTest() *gin.Engine {
 	// 设置为测试模式
 	gin.SetMode(gin.TestMode)
@@ -129,7 +131,7 @@ func setupTest() *gin.Engine {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"address":      req.Address,
+			"address":       req.Address,
 			"isWhitelisted": true,
 		})
 	})
@@ -143,7 +145,7 @@ func setupTest() *gin.Engine {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"address":      req.Address,
+			"address":       req.Address,
 			"isWhitelisted": true,
 		})
 	})
@@ -163,7 +165,7 @@ func setupTest() *gin.Engine {
 			})
 			return
 		}
-		
+
 		// 验证必填参数
 		if req.HSeed == "" || req.Base64Image == "" || req.Address == "" || req.CollectId == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -172,7 +174,7 @@ func setupTest() *gin.Engine {
 			})
 			return
 		}
-		
+
 		// 验证Base64图片格式（简单验证）
 		if len(req.Base64Image) < 10 || req.Base64Image == "invalid-base64-data" {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -181,7 +183,7 @@ func setupTest() *gin.Engine {
 			})
 			return
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0,
 			"msg":  "base64图片上传成功并更新到收藏品信息",
@@ -207,7 +209,7 @@ func setupTest() *gin.Engine {
 			})
 			return
 		}
-		
+
 		// 检查hseed是否存在（这里我们假设"non-existent-seed"是不存在的）
 		if req.HSeed == "non-existent-seed" {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -216,7 +218,7 @@ func setupTest() *gin.Engine {
 			})
 			return
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0,
 			"msg":  "图片更新成功",
@@ -226,6 +228,36 @@ func setupTest() *gin.Engine {
 				"affected_rows": 1,
 			},
 		})
+	})
+
+	// 模拟GetStaticImage接口
+	r.GET("/api/static/:collectId", func(c *gin.Context) {
+		collectId := c.Param("collectId")
+		hseed := c.Query("hseed")
+
+		if collectId == "" || hseed == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "请求参数错误"})
+			return
+		}
+
+		// 模拟图片不存在的情况
+		if collectId == "non-existent-collect" || hseed == "non-existent-seed" {
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "图片不存在"})
+			return
+		}
+
+		// 模拟图片解码失败的情况
+		if hseed == "invalid-base64-seed" {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "图片解码失败"})
+			return
+		}
+
+		// 正常情况：返回测试图片数据
+		// 使用一个简单的1x1透明图片的Base64解码后的数据
+		testImageData, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+
+		c.Header("Content-Type", "image/png")
+		c.Data(http.StatusOK, "image/png", testImageData)
 	})
 
 	return r
@@ -288,7 +320,7 @@ type SignatureResponse struct {
 
 // WhiteAddressResponse 白名单地址响应结构
 type WhiteAddressResponse struct {
-	Address      string `json:"address"`
+	Address       string `json:"address"`
 	IsWhitelisted bool   `json:"isWhitelisted"`
 }
 
@@ -321,10 +353,10 @@ func TestUploadImage64(t *testing.T) {
 
 	// 创建测试数据
 	testData := map[string]string{
-		"hseed":      generateTestSeed(),
+		"hseed":       generateTestSeed(),
 		"base64Image": generateTestBase64Image(),
-		"address":    "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-		"collectId":  "test-collect-123",
+		"address":     "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+		"collectId":   "test-collect-123",
 	}
 	data, _ := json.Marshal(testData)
 
@@ -380,10 +412,10 @@ func TestUploadImage64InvalidBase64(t *testing.T) {
 
 	// 创建包含无效Base64的测试数据
 	testData := map[string]string{
-		"hseed":      generateTestSeed(),
+		"hseed":       generateTestSeed(),
 		"base64Image": "invalid-base64-data",
-		"address":    "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-		"collectId":  "test-collect-123",
+		"address":     "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+		"collectId":   "test-collect-123",
 	}
 	data, _ := json.Marshal(testData)
 
@@ -411,10 +443,10 @@ func TestUpdateImage(t *testing.T) {
 
 	// 先上传一张图片
 	initialData := map[string]string{
-		"hseed":      testHSeed,
+		"hseed":       testHSeed,
 		"base64Image": generateTestBase64Image(),
-		"address":    "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-		"collectId":  "test-collect-123",
+		"address":     "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+		"collectId":   "test-collect-123",
 	}
 	initialDataBytes, _ := json.Marshal(initialData)
 
@@ -424,7 +456,7 @@ func TestUpdateImage(t *testing.T) {
 
 	// 然后更新这张图片
 	updateData := map[string]string{
-		"hseed":      testHSeed,
+		"hseed":       testHSeed,
 		"base64Image": generateTestBase64Image(), // 使用相同的图片进行测试
 	}
 	updateDataBytes, _ := json.Marshal(updateData)
@@ -452,7 +484,7 @@ func TestUpdateImageNotFound(t *testing.T) {
 
 	// 尝试更新不存在的图片
 	updateData := map[string]string{
-		"hseed":      "non-existent-seed",
+		"hseed":       "non-existent-seed",
 		"base64Image": generateTestBase64Image(),
 	}
 	updateDataBytes, _ := json.Marshal(updateData)
@@ -793,3 +825,84 @@ func TestIsWhiteAddressXDCheck(t *testing.T) {
 }
 
 // 注意：我们移除了TestMain函数，让Go测试框架使用默认的测试运行器
+
+// TestGetStaticImage 测试获取静态图片接口 - 正常情况
+func TestGetStaticImage(t *testing.T) {
+	router := setupTest()
+
+	// 创建请求
+	req, _ := http.NewRequest("GET", "/api/static/test-collect-123?hseed=test-seed-123", nil)
+	w := httptest.NewRecorder()
+
+	// 执行请求
+	router.ServeHTTP(w, req)
+
+	// 验证响应
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
+	assert.NotEmpty(t, w.Body.Bytes())
+}
+
+// TestGetStaticImageMissingParams 测试获取静态图片接口 - 缺少参数
+func TestGetStaticImageMissingParams(t *testing.T) {
+	router := setupTest()
+
+	// 测试缺少hseed参数
+	req1, _ := http.NewRequest("GET", "/api/static/test-collect-123", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusBadRequest, w1.Code)
+
+	var response1 Response
+	err := json.Unmarshal(w1.Body.Bytes(), &response1)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, response1.Code)
+	assert.Contains(t, response1.Msg, "请求参数错误")
+
+	// 测试缺少collectId参数（使用空collectId）
+	req2, _ := http.NewRequest("GET", "/api/static/?hseed=test-seed-123", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusBadRequest, w2.Code)
+}
+
+// TestGetStaticImageNotFound 测试获取静态图片接口 - 图片不存在
+func TestGetStaticImageNotFound(t *testing.T) {
+	router := setupTest()
+
+	// 测试不存在的collectId
+	req1, _ := http.NewRequest("GET", "/api/static/non-existent-collect?hseed=test-seed-123", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	assert.Equal(t, http.StatusNotFound, w1.Code)
+
+	var response1 Response
+	err := json.Unmarshal(w1.Body.Bytes(), &response1)
+	assert.NoError(t, err)
+	assert.Equal(t, 404, response1.Code)
+	assert.Contains(t, response1.Msg, "图片不存在")
+
+	// 测试不存在的hseed
+	req2, _ := http.NewRequest("GET", "/api/static/test-collect-123?hseed=non-existent-seed", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusNotFound, w2.Code)
+}
+
+// TestGetStaticImageDecodeError 测试获取静态图片接口 - 图片解码失败
+func TestGetStaticImageDecodeError(t *testing.T) {
+	router := setupTest()
+
+	// 测试会导致解码失败的情况
+	req, _ := http.NewRequest("GET", "/api/static/test-collect-123?hseed=invalid-base64-seed", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var response Response
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, 500, response.Code)
+	assert.Contains(t, response.Msg, "图片解码失败")
+}

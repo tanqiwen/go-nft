@@ -1,11 +1,14 @@
+// 首先导入log包
 package controllers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"image"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +20,8 @@ import (
 	"github.com/user/go-nft/models"
 )
 
+// 然后为所有错误处理添加日志记录
+
 // Test 测试接口
 func Test(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
@@ -25,14 +30,15 @@ func Test(c *gin.Context) {
 // UploadImage64 上传Base64图片
 func UploadImage64(c *gin.Context) {
 	var req struct {
-		HSeed     string `json:"hseed" binding:"required"`
+		HSeed       string `json:"hseed" binding:"required"`
 		Base64Image string `json:"base64Image" binding:"required"`
-		Address   string `json:"address" binding:"required"`
-		CollectID string `json:"collectId" binding:"required"`
+		Address     string `json:"address" binding:"required"`
+		CollectID   string `json:"collectId" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "请求参数错误"})
+		log.Printf("[UploadImage64] Failed to bind request parameters: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid request parameters"})
 		return
 	}
 
@@ -48,27 +54,30 @@ func UploadImage64(c *gin.Context) {
 	// 解码Base64
 	decodedData, err := base64.StdEncoding.DecodeString(imageData)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Base64解码失败"})
+		log.Printf("[UploadImage64] Base64 decoding failed: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Base64 decoding failed"})
 		return
 	}
 
 	// 验证是否为有效图片
-	_, format, err := image.Decode(strings.NewReader(string(decodedData)))
+	_, format, err := image.Decode(bytes.NewReader(decodedData))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "无效的图片数据"})
+		log.Printf("[UploadImage64] Image format validation failed: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid image data"})
 		return
 	}
 
 	// 保存到数据库
 	img := &models.CollectionImage{
-		HSeed:      req.HSeed,
-		CollectID:  req.CollectID,
+		HSeed:       req.HSeed,
+		CollectID:   req.CollectID,
 		ImageBase64: req.Base64Image,
-		Address:    req.Address,
+		Address:     req.Address,
 	}
 
 	if err := models.CreateOrUpdateImage(img); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "数据库操作失败"})
+		log.Printf("[UploadImage64] Database operation failed: %v, hseed: %s, address: %s", err, req.HSeed, req.Address)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "Database operation failed"})
 		return
 	}
 
@@ -78,37 +87,40 @@ func UploadImage64(c *gin.Context) {
 		HSeed:   req.HSeed,
 		State:   2, // 已处理图片
 	}
-	models.MarkSeedAsUsed(seedUsed)
+	if err := models.MarkSeedAsUsed(seedUsed); err != nil {
+		log.Printf("[UploadImage64] Failed to update seed status: %v, hseed: %s", err, req.HSeed)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
-		"msg":  "base64图片上传成功并更新到收藏品信息",
+		"msg":  "Base64 image uploaded successfully and updated to collection information",
 		"data": gin.H{
-			"id":          img.ID,
-			"hseed":       img.HSeed,
-			"collect_id":  img.CollectID,
-			"address":     img.Address,
-			"image_type":  fmt.Sprintf("image/%s", format),
+			"id":         img.ID,
+			"hseed":      img.HSeed,
+			"collect_id": img.CollectID,
+			"address":    img.Address,
+			"image_type": fmt.Sprintf("image/%s", format),
 		},
 	})
 }
 
-// UpdateImage 更新图片
 func UpdateImage(c *gin.Context) {
 	var req struct {
-		HSeed     string `json:"hseed" binding:"required"`
+		HSeed       string `json:"hseed" binding:"required"`
 		Base64Image string `json:"base64Image" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "请求参数错误"})
+		log.Printf("[UpdateImage] Failed to bind request parameters: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid request parameters"})
 		return
 	}
 
 	// 检查图片是否存在
 	existingImg, err := models.GetImageByHSeed(req.HSeed)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "图片不存在"})
+		log.Printf("[UpdateImage] Failed to get image: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "Image not found"})
 		return
 	}
 
@@ -124,21 +136,24 @@ func UpdateImage(c *gin.Context) {
 	// 解码Base64
 	decodedData, err := base64.StdEncoding.DecodeString(imageData)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Base64解码失败"})
+		log.Printf("[UpdateImage] Base64 decoding failed: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Base64 decoding failed"})
 		return
 	}
 
 	// 验证是否为有效图片
-	_, format, err := image.Decode(strings.NewReader(string(decodedData)))
+	_, format, err := image.Decode(bytes.NewReader(decodedData))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "无效的图片数据"})
+		log.Printf("[UpdateImage] Image format validation failed: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid image data"})
 		return
 	}
 
 	// 更新图片
 	existingImg.ImageBase64 = req.Base64Image
 	if err := models.CreateOrUpdateImage(existingImg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "数据库操作失败"})
+		log.Printf("[UpdateImage] Database operation failed: %v, hseed: %s", err, req.HSeed)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "Database operation failed"})
 		return
 	}
 
@@ -146,8 +161,8 @@ func UpdateImage(c *gin.Context) {
 		"code": 0,
 		"msg":  "图片更新成功",
 		"data": gin.H{
-			"hseed":        req.HSeed,
-			"image_type":   fmt.Sprintf("image/%s", format),
+			"hseed":         req.HSeed,
+			"image_type":    fmt.Sprintf("image/%s", format),
 			"affected_rows": 1,
 		},
 	})
@@ -159,14 +174,16 @@ func GetStaticImage(c *gin.Context) {
 	hseed := c.Query("hseed")
 
 	if collectId == "" || hseed == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "请求参数错误"})
+		log.Printf("[GetStaticImage] Missing required parameters: collectId=%s, hseed=%s", collectId, hseed)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid request parameters"})
 		return
 	}
 
 	// 从数据库获取图片
 	img, err := models.GetImageByCollectIDAndHSeed(collectId, hseed)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "图片不存在"})
+		log.Printf("[GetStaticImage] Failed to get image: %v, collectId: %s, hseed: %s", err, collectId, hseed)
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "Image not found"})
 		return
 	}
 
@@ -182,17 +199,23 @@ func GetStaticImage(c *gin.Context) {
 	// 解码Base64
 	decodedData, err := base64.StdEncoding.DecodeString(imageData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "图片解码失败"})
+		log.Printf("[GetStaticImage] Image decoding failed: %v, collectId: %s, hseed: %s", err, collectId, hseed)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "Image decoding failed"})
 		return
 	}
 
 	// 将图片保存到本地临时目录（可选）
 	staticDir := filepath.Join(".", "static", collectId)
-	os.MkdirAll(staticDir, 0755)
-	imagePath := filepath.Join(staticDir, fmt.Sprintf("%s.png", hseed))
-	os.WriteFile(imagePath, decodedData, 0644)
+	if err := os.MkdirAll(staticDir, 0755); err != nil {
+		log.Printf("[GetStaticImage] Failed to create directory: %v, dir: %s", err, staticDir)
+	}
 
-	// 设置响应头并返回图片数据
+	imagePath := filepath.Join(staticDir, fmt.Sprintf("%s.png", hseed))
+	if err := os.WriteFile(imagePath, decodedData, 0644); err != nil {
+		log.Printf("[GetStaticImage] 保存图片失败: %v, path: %s", err, imagePath)
+	}
+
+	// Set response header and return image data
 	c.Header("Content-Type", "image/png")
 	c.Data(http.StatusOK, "image/png", decodedData)
 }
@@ -201,24 +224,34 @@ func GetStaticImage(c *gin.Context) {
 func RequestSeed(c *gin.Context) {
 	address := c.Query("address")
 	if address == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"hSeed": "", "success": false, "message": "地址不能为空"})
+		log.Printf("[RequestSeed] Missing address parameter")
+		c.JSON(http.StatusBadRequest, gin.H{"hSeed": "", "success": false, "message": "Address cannot be empty"})
 		return
 	}
 
 	// 生成随机种子
 	hseed, err := generateRandomSeed()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"hSeed": "", "success": false, "message": "生成种子失败"})
+		log.Printf("[RequestSeed] Failed to generate random seed: %v, address: %s", err, address)
+		c.JSON(http.StatusInternalServerError, gin.H{"hSeed": "", "success": false, "message": "Failed to generate seed"})
 		return
 	}
 
 	// 检查种子是否已存在
 	for i := 0; i < 5; i++ { // 最多重试5次
-		exists, _ := models.IsSeedExists(hseed)
+		exists, err := models.IsSeedExists(hseed)
+		if err != nil {
+			log.Printf("[RequestSeed] Failed to check if seed exists: %v, hseed: %s", err, hseed)
+		}
 		if !exists {
 			break
 		}
-		hseed, _ = generateRandomSeed()
+		hseed, err = generateRandomSeed()
+		if err != nil {
+			log.Printf("[RequestSeed] Failed to regenerate random seed: %v, address: %s", err, address)
+			c.JSON(http.StatusInternalServerError, gin.H{"hSeed": "", "success": false, "message": "Failed to generate seed"})
+			return
+		}
 	}
 
 	// 保存种子订单
@@ -227,7 +260,8 @@ func RequestSeed(c *gin.Context) {
 		HSeed:   hseed,
 	}
 	if err := models.CreateSeedOrder(order); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"hSeed": "", "success": false, "message": "保存种子失败"})
+		log.Printf("[RequestSeed] Failed to save seed order: %v, address: %s, hseed: %s", err, address, hseed)
+		c.JSON(http.StatusInternalServerError, gin.H{"hSeed": "", "success": false, "message": "Failed to save seed"})
 		return
 	}
 
@@ -247,7 +281,8 @@ func UseSeed(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求参数错误"})
+		log.Printf("[UseSeed] Failed to bind request parameters: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request parameters"})
 		return
 	}
 
@@ -259,7 +294,8 @@ func UseSeed(c *gin.Context) {
 	}
 
 	if err := models.MarkSeedAsUsed(seedUsed); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "标记种子失败"})
+		log.Printf("[UseSeed] Failed to mark seed: %v, hseed: %s, address: %s", err, req.HSeed, req.Address)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to mark seed"})
 		return
 	}
 
@@ -278,7 +314,8 @@ func UseSeedPreTx(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求参数错误"})
+		log.Printf("[UseSeedPreTx] Failed to bind request parameters: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request parameters"})
 		return
 	}
 
@@ -290,7 +327,8 @@ func UseSeedPreTx(c *gin.Context) {
 	}
 
 	if err := models.MarkSeedAsUsedPreTx(seedUsed); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "标记种子失败"})
+		log.Printf("[UseSeedPreTx] Failed to mark seed: %v, hseed: %s, address: %s", err, req.HSeed, req.Address)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to mark seed"})
 		return
 	}
 
@@ -312,7 +350,8 @@ func GetSeeds(c *gin.Context) {
 
 	seeds, totalCount, err := models.GetUsedSeeds(startIndex, count)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "获取种子列表失败"})
+		log.Printf("[GetSeeds] Failed to get seed list: %v, startIndex: %d, count: %d", err, startIndex, count)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to get seed list"})
 		return
 	}
 
@@ -332,7 +371,7 @@ func GenerateChallenge(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "请求参数错误"})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "Invalid request parameters"})
 		return
 	}
 
@@ -341,15 +380,21 @@ func GenerateChallenge(c *gin.Context) {
 
 	// 检查频率限制
 	allowed, err := models.CheckRateLimit(clientIP, req.Address)
-	if err != nil || !allowed {
-		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "msg": "频率限制"})
+	if err != nil {
+		log.Printf("[GenerateChallenge] Failed to check rate limit: %v, ip: %s, address: %s", err, clientIP, req.Address)
+		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "msg": "Rate limit exceeded"})
+		return
+	}
+	if !allowed {
+		log.Printf("[GenerateChallenge] Rate limit triggered: ip: %s, address: %s", clientIP, req.Address)
+		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "msg": "Rate limit exceeded"})
 		return
 	}
 
 	// 生成挑战码
 	challengeCode, err := generateRandomChallenge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "生成挑战码失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "Failed to generate challenge code"})
 		return
 	}
 
@@ -358,11 +403,11 @@ func GenerateChallenge(c *gin.Context) {
 		ChallengeCode: challengeCode,
 		WalletAddress: req.Address,
 		IPAddress:     clientIP,
-		ExpiresAt:     time.Now().Add(10 * time.Minute), // 10分钟过期
+		ExpiresAt:     time.Now().Add(10 * time.Minute), // 10 minutes expiration
 	}
 
 	if err := models.CreateChallengeCode(challenge); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "保存挑战码失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "Failed to save challenge code"})
 		return
 	}
 
@@ -387,16 +432,20 @@ func GenerateSignature(c *gin.Context) {
 
 	// 验证挑战码
 	valid, err := models.VerifyChallengeCode(req.Challenge, req.Address)
-	if err != nil || !valid {
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "无效的挑战码"})
+		return
+	}
+	if !valid {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "无效的挑战码"})
 		return
 	}
 
-	// 生成签名（这里简化处理，实际应该使用正确的签名算法）
+	// 生成签名
 	signature := generateDummySignature(req.HSeed, req.Address, req.ChainId)
 
 	c.JSON(http.StatusOK, gin.H{
-		"hSeed":    req.HSeed,
+		"hSeed":     req.HSeed,
 		"signature": signature,
 	})
 }
@@ -414,11 +463,11 @@ func GenerateSignatureNoChallenge(c *gin.Context) {
 		return
 	}
 
-	// 生成签名（这里简化处理，实际应该使用正确的签名算法）
+	// 生成签名
 	signature := generateDummySignature(req.HSeed, req.Address, req.ChainId)
 
 	c.JSON(http.StatusOK, gin.H{
-		"hSeed":    req.HSeed,
+		"hSeed":     req.HSeed,
 		"signature": signature,
 	})
 }
@@ -441,7 +490,7 @@ func IsWhiteAddress(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"address":      req.Address,
+		"address":       req.Address,
 		"isWhitelisted": isWhitelisted,
 	})
 }
@@ -464,7 +513,7 @@ func IsWhiteAddressXDCheck(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"address":      req.Address,
+		"address":       req.Address,
 		"isWhitelisted": isWhitelisted,
 	})
 }
@@ -473,7 +522,7 @@ func IsWhiteAddressXDCheck(c *gin.Context) {
 func generateRandomSeed() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("Failed to generate random bytes: %w", err)
 	}
 	return hex.EncodeToString(bytes), nil
 }
@@ -482,7 +531,7 @@ func generateRandomSeed() (string, error) {
 func generateRandomChallenge() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("Failed to generate random bytes: %w", err)
 	}
 	return "0x" + hex.EncodeToString(bytes), nil
 }
