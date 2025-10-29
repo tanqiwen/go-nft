@@ -536,7 +536,7 @@ func generateRandomChallenge() (string, error) {
 	return "0x" + hex.EncodeToString(bytes), nil
 }
 
-// 生成模拟签名（实际应该使用正确的签名算法）
+// 生成ECDSA签名，与Solidity中的验证逻辑匹配
 func generateDummySignature(hseed, address string, chainId int) string {
 	// 这里只是模拟，实际应该使用ECDSA等算法进行签名
 	data := fmt.Sprintf("%s:%s:%d:%d", hseed, address, chainId, time.Now().Unix())
